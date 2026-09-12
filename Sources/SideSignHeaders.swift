@@ -28,17 +28,29 @@ public struct SideSignHeaders: Codable, Sendable, Equatable {
         public var headerVersion: String
         public var authApp: String
         public var userAgent: String
+        public var clientInfo: String
 
         public init(
             service: String = Constants.GrandSlam.service,
             headerVersion: String = Constants.GrandSlam.headerVersion,
             authApp: String = Constants.GrandSlam.authApp,
-            userAgent: String = Constants.GrandSlam.userAgent
+            userAgent: String = Constants.GrandSlam.userAgent,
+            clientInfo: String = Constants.GrandSlam.clientInfo
         ) {
             self.service = service
             self.headerVersion = headerVersion
             self.authApp = authApp
             self.userAgent = userAgent
+            self.clientInfo = clientInfo
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.service = try container.decodeIfPresent(String.self, forKey: .service) ?? Constants.GrandSlam.service
+            self.headerVersion = try container.decodeIfPresent(String.self, forKey: .headerVersion) ?? Constants.GrandSlam.headerVersion
+            self.authApp = try container.decodeIfPresent(String.self, forKey: .authApp) ?? Constants.GrandSlam.authApp
+            self.userAgent = try container.decodeIfPresent(String.self, forKey: .userAgent) ?? Constants.GrandSlam.userAgent
+            self.clientInfo = try container.decodeIfPresent(String.self, forKey: .clientInfo) ?? Constants.GrandSlam.clientInfo
         }
     }
 

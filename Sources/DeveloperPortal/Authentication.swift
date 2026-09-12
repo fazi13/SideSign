@@ -308,7 +308,7 @@ public extension DeveloperPortal {
 
         let headers: [String: String] = [
             "Content-Type": "text/x-xml-plist",
-            "X-MMe-Client-Info": anisetteData.clientInfo,
+            "X-MMe-Client-Info": sanitizeClientInfo(anisetteData.clientInfo),
             "Accept": "*/*",
             "User-Agent": h.grandSlam.userAgent,
             "Connection": "close"
@@ -321,7 +321,7 @@ public extension DeveloperPortal {
 
         let (data, response): (Data, URLResponse)
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await grandSlamSession.data(for: request)
         } catch {
             debugLog("[SideSign] sendAuthenticationRequest network error: \(error)")
             throw error
@@ -453,25 +453,36 @@ public extension DeveloperPortal {
 
     private func parseTrustedPhoneNumbers(from dict: [String: any Sendable]?) -> [TrustedPhoneNumber] {
         var results: [TrustedPhoneNumber] = []
-        let list = (dict?["trustedPhoneNumbers"] as? [[String: any Sendable]])
-                ?? (dict?["phoneNumbers"] as? [[String: any Sendable]])
-                ?? []
-        for item in list {
-            if let id = (item["id"] as? CustomStringConvertible)?.description.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
-                let num = (item["numberWithDialCode"] as? String)
-                        ?? (item["obfuscatedNumber"] as? String)
-                        ?? (item["lastTwoDigits"] as? String).map { "••\($0)" }
-                        ?? "Phone \(id)"
-                results.append(TrustedPhoneNumber(id: id, number: num))
+        let statusDict = dict?["Status"] as? [String: any Sendable]
+        let responseDict = dict?["Response"] as? [String: any Sendable]
+        let candidateDicts: [[String: any Sendable]?] = [dict, statusDict, responseDict]
+
+        for d in candidateDicts {
+            guard let d = d else { continue }
+            let list = (d["trustedPhoneNumbers"] as? [[String: any Sendable]])
+                    ?? (d["phoneNumbers"] as? [[String: any Sendable]])
+                    ?? []
+            for item in list {
+                if let id = (item["id"] as? CustomStringConvertible)?.description.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
+                    let num = (item["numberWithDialCode"] as? String)
+                            ?? (item["obfuscatedNumber"] as? String)
+                            ?? (item["lastTwoDigits"] as? String).map { "••\($0)" }
+                            ?? "Phone \(id)"
+                    if !results.contains(where: { $0.id == id }) {
+                        results.append(TrustedPhoneNumber(id: id, number: num))
+                    }
+                }
             }
-        }
-        if results.isEmpty, let single = dict?["phoneNumber"] as? [String: any Sendable],
-           let id = (single["id"] as? CustomStringConvertible)?.description.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
-            let num = (single["numberWithDialCode"] as? String)
-                    ?? (single["obfuscatedNumber"] as? String)
-                    ?? (single["lastTwoDigits"] as? String).map { "••\($0)" }
-                    ?? "Phone \(id)"
-            results.append(TrustedPhoneNumber(id: id, number: num))
+            if let single = d["phoneNumber"] as? [String: any Sendable],
+               let id = (single["id"] as? CustomStringConvertible)?.description.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
+                let num = (single["numberWithDialCode"] as? String)
+                        ?? (single["obfuscatedNumber"] as? String)
+                        ?? (single["lastTwoDigits"] as? String).map { "••\($0)" }
+                        ?? "Phone \(id)"
+                if !results.contains(where: { $0.id == id }) {
+                    results.append(TrustedPhoneNumber(id: id, number: num))
+                }
+            }
         }
         return results
     }
@@ -555,6 +566,7 @@ public extension DeveloperPortal {
         let activeMode: String
         let phoneNumbers: [TrustedPhoneNumber]
         let statusCode: Int
+        var warningMessage: String? = nil
     }
 
     private enum TwoFactorAuthChannel {
@@ -606,13 +618,13 @@ public extension DeveloperPortal {
                     let result = try await sendPhone2FACodeRequest(mode: "sms", phoneID: targetPhoneID, knownPhoneNumbers: phoneNumbers, context: context)
                     phoneNumbers = result.phoneNumbers
                     activeChannel = .sms(phoneID: result.phoneID)
-                    currentRequest = .sms(phoneNumbers: phoneNumbers, activeID: result.phoneID, error: nil)
+                    currentRequest = .sms(phoneNumbers: phoneNumbers, activeID: result.phoneID, error: result.warningMessage)
 
                 case .requestVoice(let targetPhoneID):
                     let result = try await sendPhone2FACodeRequest(mode: "voice", phoneID: targetPhoneID, knownPhoneNumbers: phoneNumbers, context: context)
                     phoneNumbers = result.phoneNumbers
                     activeChannel = .voice(phoneID: result.phoneID)
-                    currentRequest = .voice(phoneNumbers: phoneNumbers, activeID: result.phoneID, error: nil)
+                    currentRequest = .voice(phoneNumbers: phoneNumbers, activeID: result.phoneID, error: result.warningMessage)
 
                 case .verificationCode(let code):
                     guard let channel = activeChannel else {
@@ -664,7 +676,7 @@ public extension DeveloperPortal {
             verboseLog("[SideSign] sendTrustedDevice2FACodeRequest HTTP headers: \(prettyJSONString(from: sanitizeHeadersForLogging(allHeaders)))")
         }
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await grandSlamSession.data(for: request)
         let httpResponse = response as? HTTPURLResponse
         let statusCode = httpResponse?.safeStatusCode ?? 0
         try throwIfXMLUIErrorAlert(in: data, statusCode: statusCode, actionName: "sendTrustedDevice2FACodeRequest")
@@ -706,21 +718,30 @@ public extension DeveloperPortal {
             verboseLog("[SideSign] sendPhone2FACodeRequest HTTP headers: \(prettyJSONString(from: sanitizeHeadersForLogging(allHeaders)))")
         }
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await grandSlamSession.data(for: request)
         let httpResponse = response as? HTTPURLResponse
         let statusCode = httpResponse?.safeStatusCode ?? 0
 
         let rawStr = prettyJSONString(from: data)
         verboseLog("[SideSign] sendPhone2FACodeRequest raw response (HTTP \(statusCode)): \(rawStr)")
 
-        try throwIfXMLUIErrorAlert(in: data, statusCode: statusCode, actionName: "sendPhone2FACodeRequest")
-
         let responseDict = parsePlistOrJSON(data)
         let errorCode = responseDict?["ec"] as? Int ?? 0
         let errorMsg = (responseDict?["em"] as? String)
                    ?? ((responseDict?["Status"] as? [String: any Sendable])?["em"] as? String)
 
-        if errorCode == GrandSlamAuthErrorCodes.tooManyAttempts 
+        var warningMessage: String? = nil
+        if errorCode == GrandSlamAuthErrorCodes.smsThrottledWarning1
+            || errorCode == GrandSlamAuthErrorCodes.smsThrottledWarning2
+        {
+            warningMessage = errorMsg ?? "Enter the last code you received."
+            debugLog("[SideSign] sendPhone2FACodeRequest throttling warning (\(errorCode)): \(warningMessage!)")
+        } else {
+            try throwIfXMLUIErrorAlert(in: data, statusCode: statusCode, actionName: "sendPhone2FACodeRequest")
+        }
+
+        if errorCode == GrandSlamAuthErrorCodes.phoneVerificationThrottled
+            || errorCode == GrandSlamAuthErrorCodes.tooManyAttempts 
             || errorCode == GrandSlamAuthErrorCodes.tooManyCodesRequested 
             || errorCode == GrandSlamAuthErrorCodes.rateLimited 
             || statusCode == HTTPStatusCodes.tooManyRequests
@@ -728,13 +749,14 @@ public extension DeveloperPortal {
             let msg = errorMsg ?? "Verification codes cannot be sent to this phone number at this time. Please try again later."
             debugLog("[SideSign] sendPhone2FACodeRequest rate-limited (\(errorCode), HTTP \(statusCode)): \(msg)")
             throw DeveloperPortalError.tooManyAttempts(cause: msg)
-        } else if errorCode != 0 {
+        } else if errorCode != 0 && warningMessage == nil {
             let msg = errorMsg ?? "Failed to request verification code from Apple."
             debugLog("[SideSign] sendPhone2FACodeRequest error (\(errorCode), HTTP \(statusCode)): \(msg)")
             throw ServerError.underlyingError(code: errorCode, message: msg)
         }
 
-        guard statusCode == HTTPStatusCodes.ok else {
+        let isPreconditionChallenge = (statusCode == HTTPStatusCodes.preconditionFailed)
+        guard statusCode == HTTPStatusCodes.ok || isPreconditionChallenge else {
             let reason = errorMsg ?? HTTPStatusCodes.localizedDescription(for: statusCode)
             debugLog("[SideSign] sendPhone2FACodeRequest failed (HTTP \(statusCode)): \(reason)")
             throw ServerError.badServerResponse(reason: reason, jsonPayload: rawStr)
@@ -781,7 +803,8 @@ public extension DeveloperPortal {
             phoneID: phoneID,
             activeMode: activeMode,
             phoneNumbers: parsedNumbers,
-            statusCode: statusCode
+            statusCode: statusCode,
+            warningMessage: warningMessage
         )
     }
 
@@ -794,7 +817,7 @@ public extension DeveloperPortal {
         }
 
         debugLog("[SideSign] Verifying trusted device security code...")
-        let (verifyData, verifyResponse) = try await session.data(for: verifyRequest)
+        let (verifyData, verifyResponse) = try await grandSlamSession.data(for: verifyRequest)
         let verifyHttpResponse = verifyResponse as? HTTPURLResponse
         let verifyStatusCode = verifyHttpResponse?.safeStatusCode ?? 0
 
@@ -818,7 +841,7 @@ public extension DeveloperPortal {
         }
 
         debugLog("[SideSign] Verifying secondary security code...")
-        let (verifyData, verifyResponse) = try await session.data(for: verifyRequest)
+        let (verifyData, verifyResponse) = try await grandSlamSession.data(for: verifyRequest)
         let verifyHttpResponse = verifyResponse as? HTTPURLResponse
         let verifyStatusCode = verifyHttpResponse?.safeStatusCode ?? 0
 
@@ -893,14 +916,14 @@ public extension DeveloperPortal {
             "Accept": "application/x-buddyml",
             "Accept-Language": "en-us",
             "Content-Type": "application/x-plist",
-            "User-Agent": h.developerServices.userAgent,
+            "User-Agent": h.grandSlam.userAgent,
             "X-Apple-App-Info": h.grandSlam.authApp,
             "X-Xcode-Version": context.xcodeVersion,
             "X-Apple-Identity-Token": encodedIdentityToken,
             "X-Apple-I-MD": a.oneTimePassword,
             "X-Apple-I-MD-M": a.machineID,
             "X-Mme-Device-Id": a.deviceID,
-            "X-MMe-Client-Info": a.clientInfo,
+            "X-MMe-Client-Info": sanitizeClientInfo(a.clientInfo),
             "X-Apple-I-MD-LU": a.localUserID,
             "X-Apple-I-MD-RINFO": a.routingInfo,
             "X-Apple-I-SRL-NO": a.serialNumber,

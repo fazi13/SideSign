@@ -15,7 +15,8 @@ public enum Constants {
         public static let service        = "iCloud"
         public static let headerVersion  = "1.0.1"
         public static let authApp        = "com.apple.gs.xcode.auth"
-        public static let userAgent      = "AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)"
+        public static let clientInfo     = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        public static let userAgent      = "akd/1.0 CFNetwork/808.1.4"
     }
 
     // https://idmsa.apple.com/appleauth/auth/devices
@@ -126,8 +127,8 @@ public enum Constants {
     }
 
     public enum Anisette {
-        public static let defaultClientInfo     = AnisetteConstants.defaultClientInfo
-        public static let defaultUserAgent      = AnisetteConstants.defaultUserAgent
+        public static let defaultClientInfo     = Constants.GrandSlam.clientInfo
+        public static let defaultUserAgent      = Constants.GrandSlam.userAgent
 
         public enum URLs {
             public static let grandSlamLookup   = AnisetteConstants.URLs.grandSlamLookup
@@ -170,6 +171,9 @@ public enum GrandSlamAuthErrorCodes {
     public static let tooManyCodesRequested               = -20102
     public static let tooManyAttempts                     = -21668
     public static let rateLimited                         = -22411
+    public static let smsThrottledWarning1                = -22979
+    public static let smsThrottledWarning2                = -22981
+    public static let phoneVerificationThrottled          = -28248
 }
 
 public enum DeveloperPortalResultCodes {
@@ -192,6 +196,7 @@ public enum HTTPStatusCodes {
     public static let unauthorized        = 401
     public static let forbidden           = 403
     public static let notFound            = 404
+    public static let preconditionFailed  = 412
     public static let tooManyRequests     = 429
     public static let internalServerError = 500
     public static let badGateway          = 502
@@ -208,6 +213,8 @@ public enum HTTPStatusCodes {
             return "Access to this Apple Developer service was denied."
         case notFound:
             return "The requested Apple service endpoint could not be found."
+        case preconditionFailed:
+            return "Apple service precondition failed (HTTP 412)."
         case tooManyRequests:
             return "Too many requests sent to Apple. Please wait a few moments and try again."
         case internalServerError:

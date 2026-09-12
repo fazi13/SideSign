@@ -254,10 +254,36 @@ public final class DeveloperPortal: DeveloperPortalAPI, Sendable {
     public let portalServicesBaseURL = Constants.URLs.developerPortalV1Base
 
     let session: URLSession
+    let grandSlamSession: URLSession
 
     public init(session: URLSession = .shared, customHeaders: SideSignHeaders = SideSignHeaders()) {
         self.session = session
         self.cachedCustomHeaders = customHeaders
+
+        let grandSlamConfig = URLSessionConfiguration.ephemeral
+        grandSlamConfig.urlCache = nil
+        grandSlamConfig.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        grandSlamConfig.httpShouldUsePipelining = false
+        grandSlamConfig.httpMaximumConnectionsPerHost = 1
+        grandSlamConfig.httpAdditionalHeaders = ["Connection": "close"]
+        self.grandSlamSession = URLSession(configuration: grandSlamConfig)
+    }
+
+    public static func sanitizeClientInfo(_ clientInfo: String) -> String {
+        let trimmed = clientInfo.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return Constants.GrandSlam.clientInfo
+        }
+        let pattern = "com\\.apple\\.dt\\.Xcode(?:/[^\\)\\s>]+)?"
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+            let range = NSRange(clientInfo.startIndex..<clientInfo.endIndex, in: clientInfo)
+            return regex.stringByReplacingMatches(in: clientInfo, options: [], range: range, withTemplate: "com.apple.akd/1.0")
+        }
+        return clientInfo.replacingOccurrences(of: "com.apple.dt.Xcode", with: "com.apple.akd/1.0")
+    }
+
+    func sanitizeClientInfo(_ clientInfo: String) -> String {
+        Self.sanitizeClientInfo(clientInfo)
     }
 
     func formatDate(_ date: Date) -> String {
